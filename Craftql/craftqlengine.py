@@ -54,6 +54,17 @@ craft database drop mydb;
     # for all queries
     craft insert users ["2", "Jane", "25"],["3", "Bob", "40"];
     """
+
+    query = """
+    craft from users * where age > 30 order by name asc limit 10;
+    craft from users age where age < 30 order by name desc limit 5;
+    craft from users name,age where age >= 18 and age <= 65 order by name asc limit 20;
+    craft from users name,age where age >= 18 or age <= 65 order by name desc limit 15;
+    craft from users name,age where age != 30 order by name asc limit 10;
+    craft from users name,age where age = 30 order by name desc limit 5;
+    """
+
+
     tokens = tokenize(query)
     for token in tokens:
         print(token)

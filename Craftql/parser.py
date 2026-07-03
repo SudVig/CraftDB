@@ -1,3 +1,179 @@
+def select_parser(tokens, pos):
+
+    select_ast = {
+        "type": "select",
+        "action": "query",
+        "table": None,
+        "columns": [],
+        "where": None,
+        "order_by": None,
+        "limit": None
+    }
+
+    # ------------------------
+    # TABLE NAME
+    # ------------------------
+    if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+        raise ValueError("Expected table name")
+
+    select_ast["table"] = tokens[pos]["value"]
+    pos += 1
+
+    # ------------------------
+    # COLUMNS
+    # ------------------------
+    if pos >= len(tokens):
+        raise ValueError("Expected '*' or column names")
+
+    if tokens[pos]["type"] == "STAR":
+        select_ast["columns"].append("*")
+        pos += 1
+
+    else:
+
+        while True:
+
+            if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+                raise ValueError("Expected column name")
+
+            select_ast["columns"].append(tokens[pos]["value"])
+            pos += 1
+
+            if pos < len(tokens) and tokens[pos]["type"] == "COMMA":
+                pos += 1
+                continue
+
+            break
+
+    # ------------------------
+    # WHERE
+    # ------------------------
+    if (
+        pos < len(tokens)
+        and tokens[pos]["type"] == "KEYWORD"
+        and tokens[pos]["value"] == "where"
+    ):
+
+        pos += 1
+        conditions = []
+
+        COMPARISON_OPERATORS = {
+            "ASSIGN", "NEQ", "GREATER", "GTE", "LESS", "LTE"
+        }
+
+        VALUE_TYPES = {
+            "INTEGER", "FLOAT", "STRING", "IDENTIFIER"
+        }
+
+        while True:
+
+            # Column name
+            if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+                raise ValueError("Expected column name")
+
+            left = tokens[pos]["value"]
+            pos += 1
+
+            # Comparison operator
+            if pos >= len(tokens) or tokens[pos]["type"] not in COMPARISON_OPERATORS:
+                raise ValueError("Expected comparison operator")
+
+            operator = tokens[pos]["value"]
+            pos += 1
+
+            # Value
+            if pos >= len(tokens) or tokens[pos]["type"] not in VALUE_TYPES:
+                raise ValueError("Expected value")
+
+            right = tokens[pos]["value"]
+            pos += 1
+
+            conditions.append({
+                "left": left,
+                "operator": operator,
+                "right": right
+            })
+
+            # AND / OR
+            if (
+                pos < len(tokens)
+                and tokens[pos]["type"] == "KEYWORD"
+                and tokens[pos]["value"] in ("and", "or")
+            ):
+                conditions.append(tokens[pos]["value"].upper())
+                pos += 1
+            else:
+                break
+
+        select_ast["where"] = conditions
+
+    # ------------------------
+    # ORDER BY
+    # ------------------------
+    if (
+        pos < len(tokens)
+        and tokens[pos]["type"] == "KEYWORD"
+        and tokens[pos]["value"] == "order"
+    ):
+
+        pos += 1
+
+        if (
+            pos >= len(tokens)
+            or tokens[pos]["type"] != "KEYWORD"
+            or tokens[pos]["value"] != "by"
+        ):
+            raise ValueError("Expected 'by'")
+
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+            raise ValueError("Expected column name")
+
+        column = tokens[pos]["value"]
+        pos += 1
+
+        direction = "ASC"
+
+        if (
+            pos < len(tokens)
+            and tokens[pos]["type"] == "KEYWORD"
+            and tokens[pos]["value"] in ("asc", "desc")
+        ):
+            direction = tokens[pos]["value"].upper()
+            pos += 1
+
+        select_ast["order_by"] = {
+            "column": column,
+            "direction": direction
+        }
+
+    # ------------------------
+    # LIMIT
+    # ------------------------
+    if (
+        pos < len(tokens)
+        and tokens[pos]["type"] == "KEYWORD"
+        and tokens[pos]["value"] == "limit"
+    ):
+
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] != "INTEGER":
+            raise ValueError("Expected number after LIMIT")
+
+        select_ast["limit"] = int(tokens[pos]["value"])
+        pos += 1
+
+    # ------------------------
+    # SEMICOLON
+    # ------------------------
+    if pos >= len(tokens) or tokens[pos]["type"] != "SEMICOLON":
+        raise ValueError("Expected ';'")
+
+    pos += 1
+
+    return select_ast, pos
 def insert_parser(tokens, pos):
 
     # Implement the parsing logic for the 'insert' keyword here
@@ -98,7 +274,7 @@ def database_parser(tokens, pos):
     database_ast = {}
     
     while pos < len(tokens):
-        print(f"Current token: {tokens[pos]} at position {pos} and type is {tokens[pos]['type']} and value is {tokens[pos]['value']}")
+        
         if pos < len(tokens) and tokens[pos]['type'] == 'IDENTIFIER':
             database_ast['type'] = 'database'
             database_ast['action'] = 'create'
@@ -359,8 +535,6 @@ def parser(tokens):
         if(tokens[pos]["type"]=="EOF" and tokens[pos]["value"]==None):
 
             break
-
-        print(f"Current token: {tokens[pos]} at position {pos}")
         # craft
         if tokens[pos]["type"] != "KEYWORD" or tokens[pos]["value"] != "craft":
             raise ValueError("Expected 'craft'")
@@ -385,9 +559,9 @@ def parser(tokens):
             ast, pos = insert_parser(tokens, pos)
             AST.append(ast)
 
-        # elif command == "select":
-        #     ast, pos = select_parser(tokens, pos)
-        #     AST.append(ast)
+        elif command == "from":
+            ast, pos = select_parser(tokens, pos)
+            AST.append(ast)
 
         else:
             raise ValueError(f"Unknown command {command}")
