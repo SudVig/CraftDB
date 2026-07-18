@@ -1,488 +1,407 @@
 # CraftQL 🛠️
 
-**CraftQL** is a custom relational database engine and query language, built from scratch in Python. It implements its own lexer, parser, and execution engine to support a SQL-like syntax for defining databases, tables, and performing CRUD operations — with all data held **in memory** and rows indexed using a **binary search tree** on the primary key.
+**A relational database engine, query language, and storage system built entirely from scratch in Python.**
+
+CraftQL is a hand-built SQL-like database — custom lexer, parser, semantic analyzer, query executor, and a disk-based B+ tree storage engine, all written without relying on an existing database library. It's designed as a learning-grade and demo-grade DBMS that speaks its own query language: `craft`.
 
 ---
 
-## ✨ Features
+## Table of Contents
 
-- Custom query language with its own grammar (`craft ...;`)
-- Full CRUD support: `insert`, `select`, `update`, `delete`
-- In-memory relational storage — no files, no external database
-- Binary search tree indexing on the primary key for fast lookups
-- Schema management: create/alter/drop tables and databases
-- Filtering with `where`, sorting with `order by`, and `limit`
-- Single-line (`#`, `//`) and multi-line (`/* */`) comments
-- Lightweight, dependency-free — pure Python, no external database
-
----
-
-## 🏗️ Architecture
-
-CraftQL follows a classic language-processing pipeline:
-
-```
-Raw Query String
-       │
-       ▼
-┌───────────────┐
-│    Lexer      │   Tokenizes text into keywords, identifiers,
-│ (lexer.py)    │   operators, literals
-└──────┬────────┘
-       ▼
-┌───────────────┐
-│    Parser     │   Converts tokens into an Abstract Syntax
-│ (parser.py)   │   Tree (AST) based on CraftQL grammar
-└──────┬────────┘
-       ▼
-┌───────────────┐
-│  AST Nodes    │   SelectNode, InsertNode, UpdateNode,
-│(ast_nodes.py) │   DeleteNode, CreateTableNode, etc.
-└──────┬────────┘
-       ▼
-┌───────────────┐
-│   Executor    │   Walks the AST, applies operations
-│ (executor.py) │   against in-memory tables
-└──────┬────────┘
-       ▼
-┌───────────────┐
-│  Table Store  │   Rows held in memory, one Binary
-│ (storage.py)  │   Search Tree per table (keyed on
-└───────────────┘   the primary key) for fast lookups
-```
-
-### Project Structure
-
-```
-craftql/
-├── lexer.py         # Tokenizer
-├── parser.py         # Token stream → AST
-├── ast_nodes.py       # AST node definitions
-├── executor.py         # AST execution against in-memory tables
-├── bst.py               # Binary Search Tree used for primary-key indexing
-├── storage.py             # In-memory table/database management
-├── engine.py               # Public entry point: CraftQL().run(query)
-├── cli.py                   # Interactive REPL shell
-└── tests/
-    └── test_engine.py
-```
-
-### Data Model
-
-Each table is held **in memory** as a Python object with:
-- a **schema** (column name → data type mapping)
-- a **primary key** column
-- a **Binary Search Tree** that indexes rows by their primary key, giving fast insert/lookup/delete instead of scanning a list
-
-```python
-class Table:
-    def __init__(self, name, schema, primary_key):
-        self.name = name
-        self.schema = schema          # {"id": "int", "name": "text", "age": "int"}
-        self.primary_key = primary_key
-        self.index = BinarySearchTree()   # keyed on primary_key value
-
-class BSTNode:
-    def __init__(self, key, row):
-        self.key = key        # primary key value
-        self.row = row         # dict of the full row, e.g. {"id": 1, "name": "Alice"}
-        self.left = None
-        self.right = None
-
-class BinarySearchTree:
-    def insert(self, key, row):
-        ...   # standard BST insert, ordered by key
-
-    def find(self, key):
-        ...   # O(log n) average lookup by primary key
-
-    def delete(self, key):
-        ...   # standard BST delete with successor/predecessor handling
-
-    def in_order(self):
-        ...   # in-order traversal → naturally sorted rows by primary key
-```
-
-**Why a BST here:**
-- `select ... where id == <value>` → BST lookup instead of a full scan
-- `select ... order by <primary_key>` → in-order traversal returns rows already sorted
-- `delete ... where id == <value>` → BST delete keeps the tree balanced-ish without rebuilding from scratch
-
-Since everything lives in memory, **restarting the process clears all data** — there's no persistence layer yet (see Roadmap).
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+- [CraftQL Query Language (CQL) Reference](#craftql-query-language-cql-reference)
+  - [Database Commands](#database-commands)
+  - [Table Commands](#table-commands)
+  - [Insert](#insert)
+  - [Select (`from`)](#select-from)
+  - [Update](#update)
+  - [Delete](#delete)
+  - [Supported Operators](#supported-operators)
+- [Storage Format](#storage-format)
+- [Known Limitations / Design Notes](#known-limitations--design-notes)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
 
 ---
 
-## 🚀 Getting Started
+## Overview
 
-```bash
-git clone https://github.com/sudvig/craftql.git
-cd craftql
-python -m craftql.cli
+CraftQL is a full-stack, from-scratch implementation of a relational database:
+
+- A custom **query language** (`craft ...`) that mimics familiar SQL patterns (`select`, `insert`, `update`, `delete`, `where`, `order by`, `limit`) under its own syntax.
+- **`CraftQLEngine`** — a custom **lexer → parser** pipeline that tokenizes raw query text and builds an Abstract Syntax Tree (AST).
+- **`CraftDBEngine`** — the **semantic analyzer → executor → storage engine** that validates, runs, and persists the query. The **Storage Engine** talks only to the **B+ Tree** for row data; a separate **`FileIOEngine`** creates/manages files, folders, and metadata.
+- A single on-disk file format, **`.cdb`**, with its own binary row format — no other file types are used.
+- A lightweight **Python server** (`server.py`, Flask + flask-cors) that accepts queries from a browser-based UI (`index.html`) and returns results.
+
+It is not built on top of SQLite, Postgres, or any existing DB engine — parsing, storage, and execution are all implemented directly.
+
+## Architecture
+
+```mermaid
+%%{init: {'flowchart': {'curve': 'basis','nodeSpacing':45,'rankSpacing':80}}}%%
+flowchart LR
+
+%% ===========================
+%% CLIENT
+%% ===========================
+subgraph CLIENT["🌐 Client"]
+    UI["index.html"]
+end
+
+%% ===========================
+%% SERVER
+%% ===========================
+subgraph SERVER["⚙️ Flask Server (server.py)"]
+    ROUTE["/query"]
+end
+
+%% ===========================
+%% QUERY ENGINE
+%% ===========================
+subgraph QL["📝 CraftQLEngine"]
+    LEXER["Lexer"]
+    PARSER["Parser"]
+end
+
+%% ===========================
+%% DATABASE ENGINE
+%% ===========================
+subgraph DB["🗄️ CraftDBEngine"]
+    SEM["Semantic Analyzer"]
+    EXEC["Executor"]
+    STORE["Storage Engine"]
+    TREE["B+ Tree"]
+    FILE["FileIOEngine"]
+end
+
+%% ===========================
+%% ASSETS
+%% ===========================
+subgraph ASSET["📁 asset/"]
+    META["Database.cdb"]
+    TABLEMETA["Tables.cdb"]
+    ENV["env.py"]
+end
+
+%% ===========================
+%% DATABASE
+%% ===========================
+subgraph DATABASE["📁 db/<db_name>/"]
+    DBTABLE["Tables.cdb"]
+    DATA["<table>.cdb"]
+end
+
+%% ===========================
+%% MAIN FLOW
+%% ===========================
+UI -->|POST| ROUTE
+ROUTE --> LEXER
+LEXER --> PARSER
+PARSER -->|AST| SEM
+SEM --> EXEC
+EXEC --> STORE
+EXEC --> FILE
+STORE --> TREE
+TREE --> DATA
+
+%% ===========================
+%% FILE OPERATIONS
+%% ===========================
+FILE --> META
+FILE --> TABLEMETA
+FILE --> ENV
+FILE --> DBTABLE
+FILE --> DATA
+
+%% ===========================
+%% COLORS
+%% ===========================
+classDef client fill:#FFE0B2,stroke:#EF6C00,stroke-width:2px,color:#000;
+classDef server fill:#BBDEFB,stroke:#1565C0,stroke-width:2px,color:#000;
+classDef ql fill:#FFF9C4,stroke:#F9A825,stroke-width:2px,color:#000;
+classDef db fill:#C8E6C9,stroke:#2E7D32,stroke-width:2px,color:#000;
+classDef files fill:#E1BEE7,stroke:#6A1B9A,stroke-width:2px,color:#000;
+
+class UI client
+class ROUTE server
+class LEXER,PARSER ql
+class SEM,EXEC,STORE,TREE,FILE db
+class META,TABLEMETA,ENV,DBTABLE,DATA files
+
+style CLIENT fill:#FFF3E0,stroke:#EF6C00,stroke-width:2px
+style SERVER fill:#E3F2FD,stroke:#1565C0,stroke-width:2px
+style QL fill:#FFFDE7,stroke:#F9A825,stroke-width:2px
+style DB fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px
+style ASSET fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
+style DATABASE fill:#F3E5F5,stroke:#6A1B9A,stroke-width:2px
 ```
 
+**Pipeline, in words:**
+
+1. The browser (**`index.html`**) sends your `craft ...` query to Flask's **`/query`** route (`flask-cors` allows the cross-origin call from the static HTML page).
+2. **`CraftQLEngine`** tokenizes and parses it: the **Lexer** breaks the query into tokens, and the **Parser** builds an Abstract Syntax Tree (AST).
+3. The AST goes to **`CraftDBEngine`**. The **Semantic Analyzer** validates tables, columns, and types, then passes the validated values to the **Executor**.
+4. The **Executor** splits the work two ways:
+   - For row-level operations (insert/select/update/delete), it hands off to the **Storage Engine**, which talks only to the **B+ Tree** — the tree structures rows into pages and reads/writes them in a table's `<table>.cdb` file.
+   - For database/table-level operations (create, drop, show, describe, rename), it calls the **`FileIOEngine`** directly, which creates/removes the actual files and folders on disk and manages metadata (`Database.cdb`, `Tables.cdb`, `env.py`).
+5. Everything lands as **`.cdb`** files. A global **`asset/`** folder holds `Database.cdb` (registry of all databases), `Tables.cdb`, and `env.py` (environment config). Each database then gets its own folder, **`db/<db_name>/`**, containing that database's `Tables.cdb` (its table schemas) and one `<table>.cdb` file per table.
+6. Results travel back up through the Executor and Flask, returning as JSON to the browser.
+
+## Getting Started
+
+**Prerequisites:** Python 3.x, along with [Flask](https://flask.palletsprojects.com/) and [flask-cors](https://flask-cors.readthedocs.io/) for the server layer (the query engine and storage layer themselves are pure Python, no dependencies).
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/sudvig/craftql.git
+   cd craftql
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install flask flask-cors
+   ```
+
+3. **Open the project in VS Code** (or your editor of choice).
+
+4. **Start the server**
+   ```bash
+   python server.py
+   ```
+   This starts the CraftQL backend that parses and executes `craft` queries.
+
+5. **Open `index.html`** in your browser (double-click it, or use a Live Server extension).
+
+6. **Type a query** into the console UI and run it — for example:
+   ```sql
+   craft database use TEMP;
+   craft table users(
+       id:int,
+       name:string,
+       age:int,
+       primary(id)
+   );
+   craft insert users (id, name, age) [1, "John", 30];
+   craft from users * where age > 18 order by name asc limit 10;
+   ```
+
+## CraftQL Query Language (CQL) Reference
+
+All statements start with the `craft` keyword and end with `;`.
+
+### Database Commands
+
+| Command | Status | Description |
+|---|---|---|
+| `craft database <name>;` | ✅ Supported | Creates a new database |
+| `craft database use <name>;` | ✅ Supported | Switches the active database |
+| `craft database show;` | ✅ Supported | Lists all databases |
+| `craft database drop <name>;` | ✅ Supported | Drops/deletes a database |
+
+**Examples**
+```sql
+craft database TEMP;
+craft database use TEMP;
+craft database show;
+craft database drop TEMP;
 ```
-craft> craft database school;
-craft> craft use school;
-craft> craft table students(
+
+### Table Commands
+
+| Command | Status | Description |
+|---|---|---|
+| `craft table <name>( ... );` | ✅ Supported | Creates a table with typed columns and optional `primary(col)` |
+| `craft table drop <name>;` | ✅ Supported | Drops a table |
+| `craft table show;` | ✅ Supported | Lists all tables in the active database |
+| `craft table describe <name>;` | ✅ Supported | Shows a table's schema |
+| `craft table rename <old> to <new>;` | ✅ Supported | Renames a table |
+
+Supported column types: `int`, `string`, `float`.
+
+**Examples**
+```sql
+-- Table with a primary key
+craft table users(
     id:int,
-    name:text,
+    name:string,
     age:int,
     primary(id)
 );
-craft> craft insert students{ id:1, name:"Alice", age:22 };
-craft> craft select students where age > 18;
-```
 
----
-
-## 📖 CraftQL v1.0 Syntax Reference
-
-### DATABASE
-```
-craft database <database_name>;
-craft use <database_name>;
-craft show databases;
-craft drop database <database_name>;
-```
-
-### TABLE
-```
-craft table <table_name>(
-    <column>:<datatype>,
-    ...
-    primary(<column>)
-);
-craft show tables;
-craft describe <table_name>;
-craft drop table <table_name>;
-```
-
-### INSERT
-
-**Single row:**
-```
-craft insert <table_name>{
-    <column>:<value>,
-    ...
-};
-```
-
-**Multiple rows (bulk insert):**
-```
-craft insert <table_name>[
-{
-    ...
-},
-{
-    ...
-}
-];
-```
-
-### SELECT
-
-**All columns:**
-```
-craft select <table_name>;
-```
-
-**Specific columns:**
-```
-craft select <table_name>{
-    column1,
-    column2,
-    ...
-};
-```
-
-**With a filter:**
-```
-craft select <table_name>{
-    ...
-}
-where <condition>;
-```
-
-**With a filter, sorted ascending:**
-```
-craft select <table_name>{
-    ...
-}
-where <condition>
-order by <column> asc;
-```
-
-**With a filter, sorted descending:**
-```
-craft select <table_name>{
-    ...
-}
-where <condition>
-order by <column> desc;
-```
-
-**Limit the number of rows returned:**
-```
-craft select <table_name>
-limit <number>;
-```
-
-### UPDATE
-```
-craft update <table_name>{
-    column:value
-}
-where <condition>;
-
-craft update <table_name>{
-    column1:value,
-    column2:value
-}
-where <condition>;
-```
-
-### DELETE
-```
-craft delete <table_name>;
-
-craft delete <table_name>
-where <condition>;
-```
-
-### ALTER TABLE
-```
-craft alter <table_name>
-add <column>:<datatype>;
-
-craft alter <table_name>
-drop <column>;
-
-craft alter <table_name>
-rename <old_column>
-to <new_column>;
-```
-
-### RENAME TABLE
-```
-craft rename table <old_name>
-to <new_name>;
-```
-
-### COUNT
-```
-craft count <table_name>;
-
-craft count <table_name>
-where <condition>;
-```
-
----
-
-## ⚙️ Operators
-
-**Arithmetic**
-```
-+   -   *   /   %
-```
-
-**Comparison**
-```
-==   !=   >   <   >=   <=
-```
-
-**Logical**
-```
-and   or   not
-```
-
----
-
-## 🗃️ Data Types
-
-```
-int
-float
-text
-bool
-```
-
----
-
-## 🔑 Keywords
-
-```
-craft, database, use, table, insert, select, update, delete,
-alter, drop, rename, describe, show, count, where, order, by,
-limit, primary, to, add, and, or, not, true, false
-```
-
----
-
-## 💬 Comments
-
-```
-# Single line
-// Single line
-/*
- Multi-line
-*/
-```
-
----
-
-## Statement Terminator
-
-Every statement ends with `;`
-
----
-
-## 🧪 Basic CRUD — Syntax, Example & Output
-
-Setup used for every example below:
-
-```
-craft database library;
-craft use library;
-
-craft table books(
+-- Table without a primary key, extra float column
+craft table users(
     id:int,
-    title:text,
-    available:bool,
-    primary(id)
+    name:string,
+    age:int,
+    temp:float
 );
+
+craft table drop users;
+craft table show;
+craft table describe users;
+craft table rename users to customers;
 ```
 
-### CREATE (Insert)
+### Insert
 
-**Syntax:**
-```
-craft insert <table_name>{
-    <column>:<value>,
-    ...
-};
+| Form | Status | Description |
+|---|---|---|
+| `craft insert <table> (cols...) [values];` | ✅ Supported | Insert one row with named columns |
+| `craft insert <table> (cols...) [values], [values];` | ✅ Supported | Insert multiple rows with named columns |
+| `craft insert <table> [values], [values];` | ✅ Supported | Insert multiple rows positionally (no column names) |
+
+> **Literal formatting:** `string` values are quoted (`"John"`), while `int` and `float` values are written **without quotes** (`1`, `30.5`). Wrapping an `int`/`float` column's value in quotes will insert it as the wrong type.
+
+**Examples**
+```sql
+-- Single row, named columns
+craft insert users (id, name, age) [1, "John", 30];
+
+-- Multiple rows, named columns
+craft insert users (id, name, age) [2, "Jane", 25], [3, "Bob", 40];
+
+-- Multiple rows, positional (matches table's declared column order)
+craft insert users [2, "Jane", 25], [3, "Bob", 40];
 ```
 
-**Example:**
+### Select (`from`)
+
 ```
-craft insert books{ id:1, title:"Clean Code", available:true };
-craft insert books{ id:2, title:"The Pragmatic Programmer", available:false };
+craft from <table> <columns|*> where <condition> order by <column> <asc|desc> limit <n>;
 ```
 
-**Output:**
+- `<columns|*>` — `*` for all columns, or a comma-separated column list.
+- `where` — optional filter condition (see [operators](#supported-operators)).
+- `order by` — optional, sorts by a column `asc` or `desc`.
+- `limit` — optional, caps the number of returned rows.
+
+**Examples**
+```sql
+-- All columns, filtered and sorted
+craft from users * where age > 30 order by name asc limit 10;
+
+-- Single column
+craft from users age where age < 30 order by name desc limit 5;
+
+-- Multiple columns, range condition with AND
+craft from users name, age where age >= 18 and age <= 65 order by name asc limit 20;
+
+-- Range condition with OR
+craft from users name, age where age >= 18 or age <= 65 order by name desc limit 15;
+
+-- Not-equal condition
+craft from users name, age where age != 30 order by name asc limit 10;
+
+-- Equality condition
+craft from users name, age where age = 30 order by name desc limit 5;
 ```
-2 row(s) inserted into 'books'.
+
+### Update
+
 ```
+craft update <table> set <col> = <value>, ... where <condition>;
+```
+
+- Supports setting one or multiple columns in a single statement.
+- `where` supports the same operators and boolean logic (`and` / `or`) as `select`.
+
+**Examples**
+```sql
+-- Update a single column
+craft update users set age = 31 where id = 1;
+
+craft update users set name = "John Doe" where id = 1;
+
+-- Update multiple columns at once
+craft update users set age = 32, name = "John Smith" where id = 1;
+
+-- Combined AND condition across two columns
+craft update users set qty = 33.12, name = "John Doe" where id = 1 and name = "John Smith";
+
+-- OR condition
+craft update users set age = 34 where id = 1 or name = "John Doe";
+
+-- Mixed AND / OR condition
+craft update users set age = 35 where id = 1 and name = "John Doe" or age = 30;
+```
+
+### Delete
+
+```
+craft delete from <table> where <condition>;
+```
+
+**Examples**
+```sql
+craft delete from users where id = 1;
+craft delete from users where name = "John Doe";
+craft delete from users where age > 30;
+craft delete from users where age < 30 and name = "Jane Doe";
+craft delete from users where age >= 18 or age <= 65;
+```
+
+### Supported Operators
+
+| Operator | Meaning |
+|---|---|
+| `=` | Equal to |
+| `!=` | Not equal to |
+| `>` | Greater than |
+| `<` | Less than |
+| `>=` | Greater than or equal to |
+| `<=` | Less than or equal to |
+| `and` | Logical AND (combine conditions) |
+| `or` | Logical OR (combine conditions) |
+
+## Storage Format
+
+CraftQL persists everything to disk using a single file format: **`.cdb`**, laid out across two folder levels.
+
+**`asset/`** (global, one per install):
+- **`Database.cdb`** — registry of all databases
+- **`Tables.cdb`** — global table registry
+- **`env.py`** — environment configuration
+
+**`db/<db_name>/`** (one folder per database):
+- **`Tables.cdb`** — that database's table schemas
+- **`<table>.cdb`** — one file per table, holding its row data as B+ tree pages
+
+The **Storage Engine** talks only to the **B+ Tree** — it structures rows into 4096-byte pages with linked leaf nodes (enabling efficient range scans for `order by` / range `where` clauses, plus full deletion via borrow/merge/cascade rebalancing) and reads/writes those pages directly to a table's `<table>.cdb` file. Rows are packed in a fixed binary layout: `int` = 4 bytes, `float` = 8 bytes, `string` = 255 bytes, using bulk struct pack/unpack for performance.
+
+Creating/dropping databases and tables is a separate concern handled by the **`FileIOEngine`**, which creates and removes the actual files and folders on disk and manages the `Database.cdb` / `Tables.cdb` / `env.py` metadata directly — it doesn't go through the B+ Tree.
+
+## Known Limitations / Design Notes
+
+- The current `BTree` class uses **fixed-size pages** rather than a fully dynamic, textbook B+ tree implementation. This was a deliberate simplification to keep the storage layer easier to reason about while the rest of the engine (parser, executor, query language) matured — not a full classic B+ tree yet.
+- Only three data types are currently supported: `int`, `float`, `string`.
+- The codebase would benefit from a cleanup pass — tightening up the storage layer, reducing duplication in the executor, and moving toward a more textbook-accurate B+ tree. Contributions here are very welcome (see [Contributing](#contributing)).
+
+## Roadmap
+
+- [ ] Natural-language-to-query processing (LLM-powered — type plain English, get a `craft` query)
+- [ ] Concurrency control (safe simultaneous reads/writes)
+- [ ] ACID-compliant transactions (`begin` / `commit` / `rollback`)
+- [ ] Additional data types beyond `int`, `float`, `string` (e.g. `bool`, `date`, `text`)
+- [ ] Query optimization & index suggestions
+- [ ] Anomaly detection
+- [ ] A more textbook-accurate B+ tree (moving off the current fixed-page simplification) + general code cleanup
+- [ ] More attractive, polished query console UI
+- [ ] storage core for production-grade performance
+
+## Contributing
+
+Issues and pull requests are welcome! A few areas where help would especially move the project forward:
+
+- **New data types** — extending beyond the current `int` / `float` / `string` set (e.g. `bool`, `date`, `text`).
+- **UI polish** — the query console (`index.html`) works, but a more attractive, modern UI (better layout, syntax highlighting, result tables, dark mode, etc.) would go a long way.
+- **Storage engine cleanup** — evolving the current fixed-page `BTree` implementation toward a more textbook-accurate, dynamically balancing B+ tree, and general code cleanup across the executor/storage layers.
+- **Roadmap items above** — transactions, concurrency control, LLM-based natural language queries, and more.
+
+If you're exploring how a database engine works under the hood (lexing, parsing, B+ trees, page-based storage), this project is a good place to dig in and experiment.
 
 ---
 
-### READ (Select)
-
-**Syntax:**
-```
-craft select <table_name>
-where <condition>;
-```
-
-**Example:**
-```
-craft select books
-where available == true;
-```
-
-**Output:**
-```
-+----+--------------+------------+
-| id | title        | available  |
-+----+--------------+------------+
-| 1  | Clean Code   | true       |
-+----+--------------+------------+
-1 row(s) returned.
-```
-
----
-
-### UPDATE
-
-**Syntax:**
-```
-craft update <table_name>{
-    column:value
-}
-where <condition>;
-```
-
-**Example:**
-```
-craft update books{ available:true }
-where id == 2;
-```
-
-**Output:**
-```
-1 row(s) updated in 'books'.
-```
-
-Verify with a read:
-```
-craft select books;
-```
-```
-+----+------------------------------+------------+
-| id | title                        | available  |
-+----+------------------------------+------------+
-| 1  | Clean Code                   | true       |
-| 2  | The Pragmatic Programmer     | true       |
-+----+------------------------------+------------+
-2 row(s) returned.
-```
-
----
-
-### DELETE
-
-**Syntax:**
-```
-craft delete <table_name>
-where <condition>;
-```
-
-**Example:**
-```
-craft delete books
-where id == 1;
-```
-
-**Output:**
-```
-1 row(s) deleted from 'books'.
-```
-
-Verify with a read:
-```
-craft select books;
-```
-```
-+----+------------------------------+------------+
-| id | title                        | available  |
-+----+------------------------------+------------+
-| 2  | The Pragmatic Programmer     | true       |
-+----+------------------------------+------------+
-1 row(s) returned.
-```
-
----
-
-## 🗺️ Roadmap
-
-- [ ] Persistence (save/load in-memory tables to disk)
-- [ ] Joins across tables
-- [ ] Aggregate functions (`sum`, `avg`, `min`, `max`)
-- [ ] Balanced tree (AVL/Red-Black) to avoid BST worst-case skew
-- [ ] Transaction support
-- [ ] Export/import (CSV, SQL dump)
-
----
-
-## 📄 License
-
-MIT
+**Keywords:** database engine from scratch, custom SQL-like query language, Python DBMS, B+ tree implementation, disk-based storage engine, query parser, lexer parser executor, relational database Python, craft query language, CraftQL

@@ -267,5 +267,5 @@ def tokenize(query_string):
         "line": new_line,
         "column": i + 1
     })
-    print(KEYWORDS)
+    
     return tokens

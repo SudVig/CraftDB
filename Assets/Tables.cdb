@@ -1,0 +1,13 @@
+VERSION 1.0
+{
+  "test": {
+    "user": {
+      "columns": {
+        "id": "int",
+        "name": "string",
+        "age": "int"
+      },
+      "primary_key": "id"
+    }
+  }
+}

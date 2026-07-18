@@ -1,3 +1,146 @@
+def delete_parser(tokens, pos):
+    delete_ast = {
+        "type": "delete",
+        "action": "delete",
+        "table": None,
+        "where": None
+    }
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "KEYWORD" or tokens[pos]["value"] != "from":
+        raise ValueError("Expected 'from' after 'delete'")
+    pos+=1
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+        raise ValueError("Expected table name after 'delete'")
+    delete_ast["table"] = tokens[pos]["value"]
+    pos += 1
+
+    if (
+        pos < len(tokens)
+        and tokens[pos]["type"] == "KEYWORD"
+        and tokens[pos]["value"] == "where"
+    ):
+        delete_ast["where"], pos = parse_where(tokens, pos + 1)
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "SEMICOLON":
+        raise ValueError("Expected ';' at the end of the delete statement")
+    pos += 1
+
+    return delete_ast, pos
+def parse_where(tokens, pos):
+
+    conditions = []
+
+    COMPARISON_OPERATORS = {
+        "ASSIGN", "NEQ", "GREATER",
+        "GTE", "LESS", "LTE"
+    }
+
+    VALUE_TYPES = {
+        "INTEGER",
+        "FLOAT",
+        "STRING",
+        "IDENTIFIER"
+    }
+
+    while True:
+
+        if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+            raise ValueError("Expected column name")
+
+        left = tokens[pos]["value"]
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] not in COMPARISON_OPERATORS:
+            raise ValueError("Expected comparison operator")
+
+        operator = tokens[pos]["value"]
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] not in VALUE_TYPES:
+            raise ValueError("Expected value")
+
+        right = tokens[pos]["value"]
+        pos += 1
+
+        conditions.append({
+            "left": left,
+            "operator": operator,
+            "right": right
+        })
+
+        if (
+            pos < len(tokens)
+            and tokens[pos]["type"] == "KEYWORD"
+            and tokens[pos]["value"] in ("and", "or")
+        ):
+            conditions.append(tokens[pos]["value"].upper())
+            pos += 1
+        else:
+            break
+
+    return conditions, pos
+def update_parser(tokens, pos):
+    update_ast = {
+        "type": "update",
+        "action": "update",
+        "table": None,
+        "set": [],
+        "where": None
+    }
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+        raise ValueError("Expected table name after 'update'")
+    update_ast["table"] = tokens[pos]["value"]
+    pos += 1
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "KEYWORD" or tokens[pos]["value"] != "set":
+        raise ValueError("Expected 'set' after table name")
+
+    pos += 1
+
+    # Parse SET clause
+    while True:
+        
+        if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
+            raise ValueError("Expected column name")
+
+        column = tokens[pos]["value"]
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] != "ASSIGN":
+            raise ValueError("Expected assignment operator")
+
+        pos += 1
+
+        if pos >= len(tokens) or tokens[pos]["type"] not in ["INTEGER", "FLOAT", "STRING"]:
+            raise ValueError("Expected value")
+
+        value = tokens[pos]["value"]
+        pos += 1
+
+        update_ast["set"].append({"column": column,"value": value})
+
+        if pos < len(tokens) and tokens[pos]["type"] == "COMMA":
+            pos += 1
+            continue
+
+        break
+
+    # Parse WHERE clause
+    if (
+        pos < len(tokens)
+        and tokens[pos]["type"] == "KEYWORD"
+        and tokens[pos]["value"] == "where"
+    ):
+        update_ast["where"],pos = parse_where(tokens, pos + 1)
+
+    if pos >= len(tokens) or tokens[pos]["type"] != "SEMICOLON":
+        raise ValueError("Expected ';' at the end of the update statement")
+    pos += 1
+
+    return update_ast, pos
+
 def select_parser(tokens, pos):
 
     select_ast = {
@@ -9,6 +152,8 @@ def select_parser(tokens, pos):
         "order_by": None,
         "limit": None
     }
+
+  
 
     # ------------------------
     # TABLE NAME
@@ -54,58 +199,8 @@ def select_parser(tokens, pos):
         and tokens[pos]["value"] == "where"
     ):
 
-        pos += 1
-        conditions = []
-
-        COMPARISON_OPERATORS = {
-            "ASSIGN", "NEQ", "GREATER", "GTE", "LESS", "LTE"
-        }
-
-        VALUE_TYPES = {
-            "INTEGER", "FLOAT", "STRING", "IDENTIFIER"
-        }
-
-        while True:
-
-            # Column name
-            if pos >= len(tokens) or tokens[pos]["type"] != "IDENTIFIER":
-                raise ValueError("Expected column name")
-
-            left = tokens[pos]["value"]
-            pos += 1
-
-            # Comparison operator
-            if pos >= len(tokens) or tokens[pos]["type"] not in COMPARISON_OPERATORS:
-                raise ValueError("Expected comparison operator")
-
-            operator = tokens[pos]["value"]
-            pos += 1
-
-            # Value
-            if pos >= len(tokens) or tokens[pos]["type"] not in VALUE_TYPES:
-                raise ValueError("Expected value")
-
-            right = tokens[pos]["value"]
-            pos += 1
-
-            conditions.append({
-                "left": left,
-                "operator": operator,
-                "right": right
-            })
-
-            # AND / OR
-            if (
-                pos < len(tokens)
-                and tokens[pos]["type"] == "KEYWORD"
-                and tokens[pos]["value"] in ("and", "or")
-            ):
-                conditions.append(tokens[pos]["value"].upper())
-                pos += 1
-            else:
-                break
-
-        select_ast["where"] = conditions
+        
+        select_ast["where"],pos = parse_where(tokens, pos + 1)
 
     # ------------------------
     # ORDER BY
@@ -181,7 +276,7 @@ def insert_parser(tokens, pos):
     # craft insert <table_name> (<column1>, <column2>, ...) [<value1>, <value2>, ...];
     # craft insert <table_name> [<value1>, <value2>, ...];
     # craft insert <table_name> (<column1>, <column2>, ...) [<value1>, <value2>, ...], [<value3>, <value4>, ...];
-
+    
     insert_ast = {
         "type": "insert",
         "table": None,
@@ -216,7 +311,7 @@ def insert_parser(tokens, pos):
         pos += 1
         value_set = []
         while pos < len(tokens) and tokens[pos]["type"] != "RBRACKET":
-            if tokens[pos]["type"]!="KEYWORD" and tokens[pos]["type"]!="IDENTIFIER" and tokens[pos]["type"]!="STRING" and tokens[pos]["type"]!="NUMBER":
+            if tokens[pos]["type"]!="KEYWORD" and tokens[pos]["type"]!="IDENTIFIER" and tokens[pos]["type"]!="STRING" and tokens[pos]["type"]!="INTEGER":
                 raise ValueError("Expected value")
             value_set.append(tokens[pos]["value"])
             pos += 1
@@ -274,7 +369,7 @@ def database_parser(tokens, pos):
     database_ast = {}
     
     while pos < len(tokens):
-        
+
         if pos < len(tokens) and tokens[pos]['type'] == 'IDENTIFIER':
             database_ast['type'] = 'database'
             database_ast['action'] = 'create'
@@ -562,7 +657,12 @@ def parser(tokens):
         elif command == "from":
             ast, pos = select_parser(tokens, pos)
             AST.append(ast)
-
+        elif command =="update":
+            ast, pos = update_parser(tokens, pos)
+            AST.append(ast)
+        elif command == "delete":
+            ast, pos = delete_parser(tokens, pos)
+            AST.append(ast)
         else:
             raise ValueError(f"Unknown command {command}")
 

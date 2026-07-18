@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CraftDB — Query Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#0a0e1c;
+    --bg-panel:#111729;
+    --bg-panel-soft:#0e1425;
+    --grid-line:#22304f;
+    --accent-amber:#ffb454;
+    --accent-amber-dim:#8a6531;
+    --accent-cyan:#5eead4;
+    --accent-cyan-dim:#2f6b62;
+    --text-primary:#e7ebf7;
+    --text-muted:#7c86a8;
+    --success:#6ee7b7;
+    --error:#ff6b6b;
+    --kw:#7dc4ff;
+    --ty:#5eead4;
+    --str:#ffcf8b;
+    --num:#c6f28b;
+    --cm:#5b6584;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-ui:'Inter',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:var(--bg-deep);
+    color:var(--text-primary);
+    font-family:var(--font-ui);
+    overflow:hidden;
+  }
+
+  /* ---------- ambient blueprint grid ---------- */
+  .bg-grid{
+    position:fixed; inset:0; z-index:0;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(94,234,212,0.10) 1px, transparent 1px);
+    background-size:26px 26px;
+    animation:drift 60s linear infinite;
+  }
+  .bg-grid::after{
+    content:"";
+    position:absolute; inset:0;
+    background:radial-gradient(ellipse at 20% 0%, rgba(255,180,84,0.07), transparent 55%),
+               radial-gradient(ellipse at 85% 100%, rgba(94,234,212,0.08), transparent 55%);
+  }
+  @keyframes drift{
+    0%{background-position:0 0;}
+    100%{background-position:260px 260px;}
+  }
+
+  /* ---------- corner-bracket panel signature ---------- */
+  .corner-frame{
+    position:relative;
+    background:
+      linear-gradient(var(--accent-amber-dim), var(--accent-amber-dim)) top left / 14px 2px no-repeat,
+      linear-gradient(var(--accent-amber-dim), var(--accent-amber-dim)) top left / 2px 14px no-repeat,
+      linear-gradient(var(--accent-cyan-dim), var(--accent-cyan-dim)) top right / 14px 2px no-repeat,
+      linear-gradient(var(--accent-cyan-dim), var(--accent-cyan-dim)) top right / 2px 14px no-repeat,
+      linear-gradient(var(--accent-cyan-dim), var(--accent-cyan-dim)) bottom left / 14px 2px no-repeat,
+      linear-gradient(var(--accent-cyan-dim), var(--accent-cyan-dim)) bottom left / 2px 14px no-repeat,
+      linear-gradient(var(--accent-amber-dim), var(--accent-amber-dim)) bottom right / 14px 2px no-repeat,
+      linear-gradient(var(--accent-amber-dim), var(--accent-amber-dim)) bottom right / 2px 14px no-repeat,
+      var(--bg-panel);
+    border:1px solid var(--grid-line);
+  }
+
+  /* ---------- app shell ---------- */
+  .app{
+    position:relative; z-index:1;
+    height:100vh; display:flex; flex-direction:column;
+    padding:14px; gap:12px;
+    animation:appIn .5s ease both;
+  }
+  @keyframes appIn{ from{opacity:0; transform:translateY(6px);} to{opacity:1; transform:none;} }
+
+  /* ---------- topbar ---------- */
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 18px; flex:0 0 auto;
+  }
+  .brand{ display:flex; align-items:baseline; gap:10px; font-family:var(--font-display); }
+  .brand-mark{
+    color:var(--accent-amber); font-size:20px;
+    text-shadow:0 0 12px rgba(255,180,84,.6);
+    animation:glow 3s ease-in-out infinite;
+  }
+  @keyframes glow{ 0%,100%{opacity:.75;} 50%{opacity:1;} }
+  .brand-name{ font-size:18px; font-weight:700; letter-spacing:.3px; }
+  .brand-sub{ font-size:12px; color:var(--text-muted); font-family:var(--font-ui); font-weight:500; letter-spacing:.4px; text-transform:uppercase; }
+
+  .conn-status{ display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:12.5px; color:var(--text-muted);}
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--success); box-shadow:0 0 8px var(--success); animation:pulse 2.2s ease-in-out infinite; }
+  .dot.busy{ background:var(--accent-amber); box-shadow:0 0 8px var(--accent-amber); }
+  .dot.err{ background:var(--error); box-shadow:0 0 8px var(--error); }
+  @keyframes pulse{ 0%,100%{ transform:scale(1); opacity:1;} 50%{ transform:scale(1.4); opacity:.55;} }
+
+  /* ---------- layout ---------- */
+  .layout{ flex:1 1 auto; display:flex; gap:12px; min-height:0; }
+
+  /* ---------- sidebar ---------- */
+  .sidebar{
+    width:250px; flex:0 0 auto; display:flex; flex-direction:column;
+    padding:4px 0 10px; animation:slideIn .5s .05s ease both;
+  }
+  @keyframes slideIn{ from{opacity:0; transform:translateX(-10px);} to{opacity:1; transform:none;} }
+  .sidebar-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:12px 14px 10px; font-family:var(--font-mono); font-size:11px;
+    letter-spacing:1.5px; color:var(--text-muted); border-bottom:1px solid var(--grid-line);
+  }
+  .icon-btn{
+    background:none; border:none; color:var(--text-muted); cursor:pointer;
+    font-size:14px; padding:4px 6px; border-radius:4px; transition:transform .4s ease, color .2s ease, background .2s ease;
+  }
+  .icon-btn:hover{ color:var(--accent-cyan); background:rgba(94,234,212,.08); }
+  .icon-btn.spin{ animation:spin .6s ease; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .tree{ padding:8px; overflow-y:auto; flex:1; }
+  .db-node{ margin-bottom:4px; }
+  .db-row{
+    display:flex; align-items:center; gap:8px; padding:7px 8px; border-radius:6px;
+    font-family:var(--font-mono); font-size:12.5px; cursor:default; color:var(--text-primary);
+  }
+  .db-row .bullet{ color:var(--accent-amber); font-size:10px; }
+  .table-row{
+    display:flex; align-items:center; gap:8px; margin-left:18px; padding:6px 8px;
+    border-radius:6px; font-family:var(--font-mono); font-size:12px; color:var(--text-muted);
+    cursor:pointer; transition:background .2s ease, color .2s ease, padding-left .2s ease;
+  }
+  .table-row::before{ content:"⌁"; color:var(--accent-cyan-dim); font-size:11px; }
+  .table-row:hover{ background:rgba(94,234,212,.08); color:var(--text-primary); padding-left:12px; }
+  .tree-empty{ color:var(--text-muted); font-family:var(--font-mono); font-size:12px; padding:10px; }
+
+  /* ---------- workspace ---------- */
+  .workspace{ flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
+
+  .tabbar{ display:flex; align-items:center; gap:8px; padding:0 2px; }
+  .tab{
+    font-family:var(--font-mono); font-size:12.5px; padding:8px 14px;
+    background:var(--bg-panel); border:1px solid var(--grid-line); border-bottom:2px solid var(--accent-amber);
+    border-radius:6px 6px 0 0; color:var(--text-primary);
+  }
+
+  .signal-line{
+    height:2px; border-radius:2px; margin:0 2px;
+    background:repeating-linear-gradient(90deg, var(--accent-cyan) 0 10px, transparent 10px 20px);
+    background-size:200% 100%; opacity:.15;
+  }
+  .signal-line.active{ opacity:1; animation:flow .6s linear infinite; }
+  @keyframes flow{ from{ background-position:0 0; } to{ background-position:-40px 0; } }
+
+  .editor-wrap{
+    flex:1 1 45%; min-height:0; display:flex; overflow:hidden; border-radius:8px;
+  }
+  .gutter{
+    font-family:var(--font-mono); font-size:13px; line-height:22px; color:var(--cm);
+    text-align:right; padding:14px 10px 14px 4px; background:var(--bg-panel-soft);
+    border-right:1px solid var(--grid-line); user-select:none; min-width:40px;
+    white-space:pre;
+  }
+  .editor-shell{ position:relative; flex:1; }
+  .highlight-layer, #editor{
+    position:absolute; inset:0; margin:0; padding:14px 16px;
+    font-family:var(--font-mono); font-size:13px; line-height:22px;
+    white-space:pre; overflow:auto; box-sizing:border-box;
+  }
+  .highlight-layer{
+    pointer-events:none; color:var(--text-primary); background:transparent;
+  }
+  .highlight-layer code{ font-family:inherit; }
+  #editor{
+    background:transparent; color:transparent; caret-color:var(--accent-cyan);
+    border:none; outline:none; resize:none; z-index:1;
+  }
+  #editor::selection{ background:rgba(94,234,212,.25); }
+
+  .tok-kw{ color:var(--kw); font-weight:600; }
+  .tok-ty{ color:var(--ty); }
+  .tok-str{ color:var(--str); }
+  .tok-num{ color:var(--num); }
+  .tok-cm{ color:var(--cm); font-style:italic; }
+
+  /* ---------- toolbar ---------- */
+  .toolbar{ display:flex; align-items:center; gap:10px; padding:0 2px; }
+  .btn-run{
+    font-family:var(--font-ui); font-weight:600; font-size:13px;
+    color:#0a0e1c; background:linear-gradient(135deg, var(--accent-amber), #ff8a5b);
+    border:none; padding:10px 18px; border-radius:7px; cursor:pointer;
+    display:flex; align-items:center; gap:8px;
+    box-shadow:0 0 0 rgba(255,180,84,0);
+    transition:transform .15s ease, box-shadow .25s ease;
+  }
+  .btn-run:hover{ transform:translateY(-1px); box-shadow:0 6px 18px rgba(255,180,84,.35); }
+  .btn-run:active{ transform:translateY(0); }
+  .btn-run .kbd{ font-family:var(--font-mono); font-size:10.5px; background:rgba(10,14,28,.25); padding:2px 6px; border-radius:4px; }
+
+  .btn-ghost{
+    font-family:var(--font-ui); font-weight:500; font-size:13px; color:var(--text-muted);
+    background:transparent; border:1px solid var(--grid-line); padding:9px 14px; border-radius:7px;
+    cursor:pointer; transition:color .2s ease, border-color .2s ease, background .2s ease;
+  }
+  .btn-ghost:hover{ color:var(--text-primary); border-color:var(--accent-cyan-dim); background:rgba(94,234,212,.06); }
+
+  .elapsed{ margin-left:auto; font-family:var(--font-mono); font-size:12px; color:var(--text-muted); }
+
+  /* ---------- output ---------- */
+  .output-wrap{ flex:1 1 30%; min-height:0; display:flex; flex-direction:column; border-radius:8px; overflow:hidden; }
+  .output-head{
+    padding:9px 14px; font-family:var(--font-mono); font-size:11px; letter-spacing:1.5px;
+    color:var(--text-muted); flex:0 0 auto;
+  }
+  .output-head-row{
+    display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--grid-line); flex:0 0 auto;
+  }
+  .output-head-row .output-head{ border-bottom:none; }
+
+  .result-tabs{ display:flex; gap:4px; padding:6px 10px 6px 0; overflow-x:auto; }
+  .result-tab{
+    font-family:var(--font-mono); font-size:11px; padding:5px 10px;
+    border-radius:5px; border:1px solid var(--grid-line); background:transparent;
+    color:var(--text-muted); cursor:pointer; white-space:nowrap;
+    transition:color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .result-tab:hover{ color:var(--text-primary); border-color:var(--accent-cyan-dim); }
+  .result-tab.active{ color:var(--bg-deep); background:var(--accent-cyan); border-color:var(--accent-cyan); font-weight:600; }
+  .result-tab.tab-error{ border-left:2px solid var(--error); }
+  .result-tab.tab-success{ border-left:2px solid var(--success); }
+
+  .output{
+    margin:0; padding:14px 16px; overflow:auto; flex:1;
+    font-family:var(--font-mono); font-size:12.5px; line-height:1.6; color:var(--accent-cyan);
+    white-space:pre-wrap; word-break:break-word;
+  }
+  .output.error{ color:var(--error); }
+  .output.success{ color:var(--success); }
+  .output.placeholder{ color:var(--text-muted); font-style:italic; }
+
+  .result-table{ width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:12px; }
+  .result-table th, .result-table td{
+    padding:6px 10px; text-align:left; border-bottom:1px solid var(--grid-line); white-space:nowrap;
+  }
+  .result-table th{ color:var(--accent-cyan); font-weight:600; position:sticky; top:0; background:var(--bg-panel); }
+  .result-table tbody tr:hover{ background:rgba(94,234,212,.06); }
+
+  /* ---------- toasts ---------- */
+  .toast-container{ position:fixed; bottom:20px; right:20px; z-index:50; display:flex; flex-direction:column; gap:10px; }
+  .toast{
+    font-family:var(--font-mono); font-size:12.5px; padding:12px 16px; border-radius:7px;
+    background:var(--bg-panel); border:1px solid var(--grid-line); border-left:3px solid var(--success);
+    box-shadow:0 10px 30px rgba(0,0,0,.4);
+    animation:toastIn .35s cubic-bezier(.2,.9,.3,1.3) both, toastOut .35s ease 2.65s both;
+  }
+  .toast.error{ border-left-color:var(--error); }
+  @keyframes toastIn{ from{ opacity:0; transform:translateX(24px);} to{ opacity:1; transform:none;} }
+  @keyframes toastOut{ from{ opacity:1;} to{ opacity:0; transform:translateX(24px);} }
+
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:var(--grid-line); border-radius:5px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+</style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<div class="app">
+  <header class="topbar corner-frame">
+    <div class="brand">
+      <span class="brand-mark">⌁</span>
+      <span class="brand-name">CraftDB</span>
+      <span class="brand-sub">Query Console</span>
+    </div>
+    <div class="conn-status">
+      <span class="dot" id="connDot"></span>
+      <span id="connText">connecting…</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar corner-frame">
+      <div class="sidebar-head">
+        <span>SCHEMA</span>
+        <button class="icon-btn" id="refreshBtn" title="Refresh schema">↻</button>
+      </div>
+      <div class="tree" id="schemaTree">
+        <div class="tree-empty">Loading schema…</div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <div class="tabbar"><div class="tab">query.cql</div></div>
+      <div class="signal-line" id="signalLine"></div>
+
+      <div class="editor-wrap corner-frame">
+        <div class="gutter" id="gutter">1</div>
+        <div class="editor-shell">
+          <pre class="highlight-layer" id="highlightLayer"><code></code></pre>
+          <textarea id="editor" spellcheck="false">craft database use TEMP;</textarea>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn-run" id="runBtn">▶ Run <span class="kbd">F5</span></button>
+        <button class="btn-ghost" id="clearBtn">Clear Output</button>
+        <span class="elapsed" id="elapsed"></span>
+      </div>
+
+      <div class="output-wrap corner-frame">
+        <div class="output-head-row">
+          <div class="output-head">OUTPUT</div>
+          <div class="result-tabs" id="resultTabs"></div>
+        </div>
+        <div class="output placeholder" id="output" style="overflow:auto;">Run a query to see results here.</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// If you're serving this HTML from somewhere other than the Flask app
+// itself (e.g. a Live Server tab on :5500), set this to the Flask
+// server's address so the API calls below know where to go.
+// Leave it as "" if this page is loaded from Flask directly (recommended).
+const API_BASE = ""; // e.g. "http://127.0.0.1:5000"
+
+const KEYWORDS = ["craft","database","table","use","show","drop","insert","from","where",
+  "order","by","limit","update","set","delete","and","or","asc","desc","primary","rename","to","describe"];
+const TYPES = ["int","string","float","bool"];
+
+const kwRe  = new RegExp("\\b(" + KEYWORDS.join("|") + ")\\b", "gi");
+const tyRe  = new RegExp("\\b(" + TYPES.join("|") + ")\\b", "gi");
+const strRe = /"[^"]*"/g;
+const numRe = /\b\d+(\.\d+)?\b/g;
+const cmRe  = /(#.*|--.*)/g;
+
+function escapeHtml(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function highlight(src){
+  // Tokenize by splitting out comments and strings first so keyword/number
+  // matching never reaches inside them.
+  const tokens = [];
+  let cursor = 0;
+  const combined = new RegExp(cmRe.source + "|" + strRe.source, "g");
+  let m;
+  while((m = combined.exec(src))){
+    if(m.index > cursor) tokens.push({t:src.slice(cursor, m.index), tag:null});
+    const isComment = m[0].startsWith("#") || m[0].startsWith("--");
+    tokens.push({t:m[0], tag:isComment ? "cm" : "str"});
+    cursor = m.index + m[0].length;
+  }
+  if(cursor < src.length) tokens.push({t:src.slice(cursor), tag:null});
+
+  return tokens.map(tok=>{
+    if(tok.tag) return `<span class="tok-${tok.tag}">${escapeHtml(tok.t)}</span>`;
+    let out = escapeHtml(tok.t);
+    out = out.replace(kwRe, '<span class="tok-kw">$1</span>');
+    out = out.replace(tyRe, '<span class="tok-ty">$1</span>');
+    out = out.replace(numRe, '<span class="tok-num">$&</span>');
+    return out;
+  }).join("");
+}
+
+const editor = document.getElementById("editor");
+const highlightLayer = document.getElementById("highlightLayer").querySelector("code");
+const gutter = document.getElementById("gutter");
+const output = document.getElementById("output");
+const resultTabsEl = document.getElementById("resultTabs");
+const elapsedEl = document.getElementById("elapsed");
+const signalLine = document.getElementById("signalLine");
+const connDot = document.getElementById("connDot");
+const connText = document.getElementById("connText");
+const toastContainer = document.getElementById("toastContainer");
+const schemaTree = document.getElementById("schemaTree");
+
+function renderEditor(){
+  highlightLayer.innerHTML = highlight(editor.value) + "\n";
+  const lines = editor.value.split("\n").length;
+  gutter.textContent = Array.from({length:lines}, (_,i)=>i+1).join("\n");
+}
+function syncScroll(){
+  document.getElementById("highlightLayer").scrollTop = editor.scrollTop;
+  document.getElementById("highlightLayer").scrollLeft = editor.scrollLeft;
+  gutter.scrollTop = editor.scrollTop;
+}
+editor.addEventListener("input", renderEditor);
+editor.addEventListener("scroll", syncScroll);
+editor.addEventListener("keydown", e=>{
+  if(e.key === "Tab"){ e.preventDefault();
+    const s=editor.selectionStart, en=editor.selectionEnd;
+    editor.value = editor.value.slice(0,s) + "    " + editor.value.slice(en);
+    editor.selectionStart = editor.selectionEnd = s+4;
+    renderEditor();
+  }
+});
+renderEditor();
+
+function toast(message, isError=false){
+  const el = document.createElement("div");
+  el.className = "toast" + (isError ? " error" : "");
+  el.textContent = message;
+  toastContainer.appendChild(el);
+  setTimeout(()=> el.remove(), 3000);
+}
+
+function setConn(state, label){
+  connDot.className = "dot" + (state==="busy" ? " busy" : state==="err" ? " err" : "");
+  connText.textContent = label;
+}
+
+async function loadSchema(){
+  try{
+    const res = await fetch(API_BASE + "http://127.0.0.1:5000/api/schema");
+    const data = await res.json();
+    schemaTree.innerHTML = "";
+    const names = Object.keys(data.databases || {});
+    if(names.length === 0){
+      schemaTree.innerHTML = '<div class="tree-empty">No databases yet.</div>';
+    }
+    names.forEach(dbName=>{
+      const dbNode = document.createElement("div");
+      dbNode.className = "db-node";
+      const active = dbName === data.current;
+      dbNode.innerHTML = `<div class="db-row"><span class="bullet">${active ? "●" : "○"}</span>${dbName}</div>`;
+
+      // data.databases[dbName] is now an object: { tableName: {columns, primary_key} }
+      const tables = data.databases[dbName] || {};
+      Object.keys(tables).forEach(tableName=>{
+        const tableInfo = tables[tableName] || {};
+        const columns = tableInfo.columns || {};
+        const primaryKey = tableInfo.primary_key;
+
+        const row = document.createElement("div");
+        row.className = "table-row";
+        row.textContent = tableName;
+        row.title = "Click to view columns · double-click to insert a starter query";
+        row.style.cursor = "pointer";
+
+        const structure = document.createElement("div");
+        structure.className = "table-structure";
+        structure.style.display = "none";
+        structure.style.marginLeft = "30px";
+        structure.style.padding = "4px 0 6px";
+        structure.style.fontFamily = "var(--font-mono)";
+        structure.style.fontSize = "11px";
+        structure.style.color = "var(--text-muted)";
+
+        const colEntries = Object.keys(columns);
+        if(colEntries.length === 0){
+          structure.textContent = "(no columns)";
+        }else{
+          structure.innerHTML = colEntries.map(colName=>{
+            const isPk = colName === primaryKey;
+            const pkTag = isPk ? ' <span style="color:var(--accent-amber);">PK</span>' : "";
+            return `<div>${escapeHtml(colName)}: <span style="color:var(--accent-cyan);">${escapeHtml(columns[colName])}</span>${pkTag}</div>`;
+          }).join("");
+        }
+
+        row.addEventListener("click", ()=>{
+          structure.style.display = structure.style.display === "none" ? "block" : "none";
+        });
+        row.addEventListener("dblclick", (e)=>{
+          e.stopPropagation();
+          const insert = `craft from ${tableName} * where ;\n`;
+          const pos = editor.selectionStart;
+          editor.value = editor.value.slice(0,pos) + insert + editor.value.slice(pos);
+          renderEditor();
+          editor.focus();
+        });
+
+        dbNode.appendChild(row);
+        dbNode.appendChild(structure);
+      });
+      schemaTree.appendChild(dbNode);
+    });
+    setConn(names.length ? "ok" : "ok", data.current || "no database selected");
+  }catch(err){
+    setConn("err", "backend unreachable");
+    schemaTree.innerHTML = '<div class="tree-empty">Could not reach the backend API.</div>';
+  }
+}
+
+// ---------- multi-result handling ----------
+// The backend can return either a single result object
+// ({result_type, result}) or a list of them (one per statement
+// executed in the submitted query). We normalize to a list and let
+// the user tab between them.
+let lastResults = [];
+let activeResultIndex = 0;
+
+function labelFor(entry, i){
+  if(entry.result_type === "error") return `Q${i+1} ✕`;
+  if(entry.result_type === "list") return `Q${i+1} (${Array.isArray(entry.result) ? entry.result.length : 0})`;
+  return `Q${i+1} ✓`;
+}
+
+function renderResultTabs(){
+  resultTabsEl.innerHTML = "";
+  if(lastResults.length <= 1) return; // no need for tabs on a single result
+  lastResults.forEach((entry, i)=>{
+    const btn = document.createElement("button");
+    btn.className = "result-tab" + (i === activeResultIndex ? " active" : "")
+      + (entry.result_type === "error" ? " tab-error" : " tab-success");
+    btn.textContent = labelFor(entry, i);
+    btn.addEventListener("click", ()=>{
+      activeResultIndex = i;
+      renderResultTabs();
+      renderActiveResult();
+    });
+    resultTabsEl.appendChild(btn);
+  });
+}
+
+function renderActiveResult(){
+  output.classList.remove("placeholder", "error", "success");
+  output.innerHTML = "";
+
+  if(lastResults.length === 0){
+    output.classList.add("placeholder");
+    output.textContent = "Run a query to see results here.";
+    return;
+  }
+
+  const entry = lastResults[activeResultIndex];
+  const type = entry.result_type;
+  const value = entry.result;
+
+  if(type === "error"){
+    output.classList.add("error");
+    // Backend sends "<message>\n\n<traceback>" as one string — split on the
+    // blank line so the headline error stands out and the traceback is
+    // tucked away but still available.
+    const parts = String(value).split(/\n\n([\s\S]*)/);
+    const headline = parts[0];
+    const traceback = parts[1];
+
+    const msg = document.createElement("div");
+    msg.textContent = "Error: " + headline;
+    output.appendChild(msg);
+
+    if(traceback && traceback.trim()){
+      const details = document.createElement("details");
+      details.style.marginTop = "8px";
+      const summary = document.createElement("summary");
+      summary.style.cursor = "pointer";
+      summary.style.color = "var(--text-muted)";
+      summary.textContent = "Show traceback";
+      const pre = document.createElement("pre");
+      pre.style.margin = "6px 0 0";
+      pre.style.whiteSpace = "pre-wrap";
+      pre.textContent = traceback;
+      details.appendChild(summary);
+      details.appendChild(pre);
+      output.appendChild(details);
+    }
+    return;
+  }
+
+  if(type === "list"){
+    if(!Array.isArray(value) || value.length === 0){
+      output.classList.add("placeholder");
+      output.textContent = "No rows returned.";
+      return;
+    }
+    // union of keys across all rows, in case rows differ slightly
+    const cols = Array.from(value.reduce((set, row)=>{
+      Object.keys(row).forEach(k=>set.add(k));
+      return set;
+    }, new Set()));
+
+    const table = document.createElement("table");
+    table.className = "result-table";
+    const thead = document.createElement("thead");
+    thead.innerHTML = "<tr>" + cols.map(c => `<th>${escapeHtml(c)}</th>`).join("") + "</tr>";
+    table.appendChild(thead);
+    const tbody = document.createElement("tbody");
+    value.forEach(row=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = cols.map(c => `<td>${row[c] === undefined ? "" : escapeHtml(row[c])}</td>`).join("");
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    output.appendChild(table);
+    return;
+  }
+
+  // "message" / "string" / anything else -> green success text
+  output.classList.add("success");
+  output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+function resetOutput(){
+  lastResults = [];
+  activeResultIndex = 0;
+  resultTabsEl.innerHTML = "";
+  output.classList.remove("error", "success");
+  output.classList.add("placeholder");
+  output.textContent = "Run a query to see results here.";
+}
+
+async function runQuery(){
+  const query = editor.value.trim();
+  if(!query){ toast("Nothing to execute", true); return; }
+
+  signalLine.classList.add("active");
+  setConn("busy", "executing…");
+  const started = performance.now();
+
+  try{
+    const res = await fetch(API_BASE + "http://127.0.0.1:5000/api/execute", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({query})
+    });
+    const data = await res.json();
+    const elapsed = Math.round(performance.now() - started);
+    elapsedEl.textContent = elapsed + " ms";
+
+    // Fetch + JSON parse succeeded past this point — any error from here
+    // on is a rendering bug, not a connection failure, so it's handled
+    // separately below instead of falling into the network catch block.
+    try{
+      if(!data.ok){
+        // Top-level failure: {"ok": false, "error": "<message>\n\n<traceback>"}.
+        // There's no data.result at all here, so this is handled as its own
+        // case rather than falling through to the list-of-results path.
+        lastResults = [{ result_type: "error", result: data.error || "Unknown error" }];
+        activeResultIndex = 0;
+        renderResultTabs();
+        renderActiveResult();
+        toast("Execution failed", true);
+        return;
+      }
+
+      lastResults = Array.isArray(data.result) ? data.result : [data.result];
+      activeResultIndex = lastResults.length - 1; // land on the last query's result
+
+      const anyError = lastResults.some(r => r && r.result_type === "error");
+      renderResultTabs();
+      renderActiveResult();
+
+      if(!anyError){
+        toast("Executed successfully in " + elapsed + " ms");
+      }else{
+        toast("Execution failed", true);
+      }
+    }catch(renderErr){
+      console.error("Result rendering failed:", renderErr, data);
+      output.classList.remove("placeholder", "success");
+      output.classList.add("error");
+      output.textContent = "Got a response but couldn't render it — see console for details.";
+      toast("Render error — check console", true);
+    }
+  }catch(err){
+    console.error("Fetch failed:", err);
+    lastResults = [];
+    resultTabsEl.innerHTML = "";
+    output.classList.remove("placeholder", "success");
+    output.classList.add("error");
+    output.textContent = "Error: could not reach the backend API.";
+    toast("Backend unreachable", true);
+  }finally{
+    signalLine.classList.remove("active");
+    loadSchema();
+  }
+}
+
+document.getElementById("runBtn").addEventListener("click", runQuery);
+document.getElementById("clearBtn").addEventListener("click", resetOutput);
+document.getElementById("refreshBtn").addEventListener("click", (e)=>{
+  e.currentTarget.classList.remove("spin");
+  void e.currentTarget.offsetWidth;
+  e.currentTarget.classList.add("spin");
+  loadSchema();
+});
+window.addEventListener("keydown", e=>{
+  if(e.key === "F5" || (e.ctrlKey && e.key === "Enter")){
+    e.preventDefault();
+    runQuery();
+  }
+});
+
+loadSchema();
+</script>
+</body>
+</html>
